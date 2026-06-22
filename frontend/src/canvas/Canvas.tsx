@@ -326,6 +326,39 @@ function drawMeasurement(
   ctx.restore();
 }
 
+function drawElementLabel(
+  ctx: CanvasRenderingContext2D,
+  el: CanvasElement,
+  zoom: number,
+) {
+  if (!el.label?.trim()) return;
+
+  const bounds = getElementBounds(el);
+  const labelX = (bounds.left + bounds.right) / 2;
+  const labelY = bounds.top - 6 / zoom;
+
+  const fontSize = 12 / zoom;
+  const padding = 4 / zoom;
+  const label = el.label.trim();
+
+  ctx.save();
+  ctx.font = `${fontSize}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+
+  const metrics = ctx.measureText(label);
+  const boxW = metrics.width + padding * 2;
+  const boxH = fontSize + padding * 2;
+
+  ctx.fillStyle = "rgba(26, 26, 26, 0.9)";
+  ctx.fillRect(labelX - boxW / 2, labelY - boxH, boxW, boxH);
+
+  ctx.fillStyle = "#a8d4ff";
+  ctx.fillText(label, labelX, labelY - padding / 2);
+
+  ctx.restore();
+}
+
 function drawPolygonDraft(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -449,6 +482,12 @@ export default function Canvas() {
           e.preventDefault();
           ir.measurements = [];
           renderRef.current();
+          return;
+        }
+        if (state.tool === "annotate" && state.selectedIds.length > 0) {
+          e.preventDefault();
+          dispatch({ type: "CLEAR_SELECTION" });
+          return;
         }
         return;
       }
@@ -568,6 +607,7 @@ export default function Canvas() {
     for (const el of state.elements) {
       const selected = state.selectedIds.includes(el.id);
       drawElement(ctx, el, selected);
+      drawElementLabel(ctx, el, zoom);
     }
 
     const draft = interactionRef.current.polygonDraft;
@@ -837,6 +877,21 @@ export default function Canvas() {
       return;
     }
 
+    // Annotate tool → select shape for labeling
+    if (tool === "annotate") {
+      if (e.button !== 0) return;
+
+      const world = getWorldPos(e);
+      const hit = hitTest(world.x, world.y);
+
+      if (hit) {
+        dispatch({ type: "SET_SELECTION", ids: [hit.id] });
+      } else {
+        dispatch({ type: "CLEAR_SELECTION" });
+      }
+      return;
+    }
+
     // Select tool → point edit, pick & drag
     const world = getWorldPos(e);
 
@@ -983,6 +1038,7 @@ export default function Canvas() {
     if (ir.isDragging) return "move";
     if (state.tool === "pan") return "grab";
     if (state.tool === "polygon" || state.tool === "measure") return "crosshair";
+    if (state.tool === "annotate") return "pointer";
     if (ir.pointEdit) return "crosshair";
     return "default";
   }

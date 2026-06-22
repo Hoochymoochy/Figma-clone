@@ -10,6 +10,7 @@ interface BaseElement {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  label?: string;
 }
 
 export interface RectElement extends BaseElement {
@@ -44,6 +45,7 @@ export type ElementUpdate = {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
+  label?: string;
 };
 
 export interface Viewport {
@@ -52,7 +54,7 @@ export interface Viewport {
   zoom: number;
 }
 
-export type Tool = "select" | "pan" | "polygon" | "measure";
+export type Tool = "select" | "pan" | "polygon" | "measure" | "annotate";
 
 export interface Measurement {
   start: Point;

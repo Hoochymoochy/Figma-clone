@@ -48,6 +48,17 @@ export default function TopBar() {
       >
         📏 Measure
       </button>
+      <button
+        onClick={() => dispatch({ type: "SET_TOOL", tool: "annotate" })}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          state.tool === "annotate"
+            ? "bg-neutral-600 text-white"
+            : "text-neutral-300 hover:bg-neutral-700"
+        }`}
+        title="Annotate — click a shape to add or edit its label"
+      >
+        🏷 Annotate
+      </button>
 
       {/* Divider */}
       <div className="w-px h-5 bg-neutral-600" />
@@ -92,6 +103,8 @@ export default function TopBar() {
           ? "Click to place points · Double-click or Enter to close · Esc to cancel"
           : state.tool === "measure"
             ? "Click point A, then point B · Distances in grid units · Esc to cancel"
+          : state.tool === "annotate"
+            ? "Click a shape to label it · Edit in the sidebar · Esc to deselect"
           : hasSelection
             ? `${state.selectedIds.length} selected`
             : "Space+drag to pan · Scroll to zoom"}
