@@ -1,14 +1,23 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+pub struct SnappedPosition {
+    pub original_x: f64,
+    pub original_y: f64,
+    pub snapped_x: f64,
+    pub snapped_y: f64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+#[wasm_bindgen]
+impl SnappedPosition {
+    pub fn new(x: f64, y: f64, grid_size: f64) -> SnappedPosition {
+        let snapped_x = (x / grid_size).round() * grid_size;
+        let snapped_y = (y / grid_size).round() * grid_size;
+        SnappedPosition {
+            original_x: x,
+            original_y: y,
+            snapped_x,
+            snapped_y,
+        }
     }
 }

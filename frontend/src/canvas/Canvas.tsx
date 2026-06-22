@@ -1,6 +1,9 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useCanvasContext } from "./store.tsx";
 import type { CanvasElement } from "./types.ts";
+import { SnappedPosition } from "../geometry/pkg/index.ts";
+
+const GRID_SIZE = 20;
 
 // ---- viewport helpers -------------------------------------------------------
 
@@ -321,10 +324,13 @@ export default function Canvas() {
       const dx = world.x - ir.dragStartX;
       const dy = world.y - ir.dragStartY;
       for (const { id, x, y } of ir.dragOrigins) {
+        const rawX = x + dx;
+        const rawY = y + dy;
+        const snapped = new SnappedPosition(rawX, rawY, GRID_SIZE);
         dispatch({
           type: "UPDATE_ELEMENT",
           id,
-          changes: { x: x + dx, y: y + dy },
+          changes: { x: snapped.snapped_x, y: snapped.snapped_y },
         });
       }
       return;
