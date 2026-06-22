@@ -4,6 +4,9 @@ import type { CanvasElement, Point, PolygonElement, Tool } from "./types.ts";
 import { SnappedPosition } from "../geometry/pkg/index.ts";
 
 const GRID_SIZE = 20;
+const VERTEX_HIT_PX = 8;
+const EDGE_HIT_PX = 10;
+const MIN_POLYGON_POINTS = 3;
 
 // ---- viewport helpers -------------------------------------------------------
 
@@ -150,6 +153,85 @@ function getElementBounds(el: CanvasElement) {
   return { left: el.x, top: el.y, right: el.x + el.width, bottom: el.y + el.height };
 }
 
+function distance(ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function projectPointOnSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): Point {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return { x: ax, y: ay };
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return { x: ax + t * dx, y: ay + t * dy };
+}
+
+function hitTestVertex(
+  points: Point[],
+  wx: number,
+  wy: number,
+  hitRadius: number,
+): number | null {
+  for (let i = points.length - 1; i >= 0; i--) {
+    const pt = points[i];
+    if (distance(wx, wy, pt.x, pt.y) <= hitRadius) return i;
+  }
+  return null;
+}
+
+function hitTestEdge(
+  points: Point[],
+  wx: number,
+  wy: number,
+  hitRadius: number,
+): { edgeIndex: number; point: Point } | null {
+  let best: { edgeIndex: number; point: Point; dist: number } | null = null;
+
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const projected = projectPointOnSegment(wx, wy, a.x, a.y, b.x, b.y);
+    const dist = distance(wx, wy, projected.x, projected.y);
+    if (dist <= hitRadius && (!best || dist < best.dist)) {
+      best = { edgeIndex: i, point: projected, dist };
+    }
+  }
+
+  return best ? { edgeIndex: best.edgeIndex, point: best.point } : null;
+}
+
+function drawVertexHandles(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  selectedIndex: number | null,
+  zoom: number,
+) {
+  const radius = 5;
+  const strokeWidth = 2 / zoom;
+
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i];
+    const selected = i === selectedIndex;
+
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = selected ? "#ffffff" : "#4A90D9";
+    ctx.fill();
+    ctx.strokeStyle = selected ? "#4A90D9" : "#ffffff";
+    ctx.lineWidth = strokeWidth;
+    ctx.stroke();
+  }
+}
+
 function drawPolygonDraft(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -213,6 +295,8 @@ export default function Canvas() {
       | { id: string; x: number; y: number; points?: Point[] }[]
       | null,
     polygonDraft: null as { points: Point[]; previewPoint: Point | null } | null,
+    pointEdit: null as { elementId: string; selectedPointIndex: number | null } | null,
+    draggingPointIndex: null as number | null,
   });
 
   // ---- keyboard handlers ----------------------------------------------------
@@ -243,23 +327,49 @@ export default function Canvas() {
         return;
       }
 
-      // Escape → cancel polygon draft
+      // Escape → cancel polygon draft or exit point edit
       if (e.key === "Escape") {
-        if (interactionRef.current.polygonDraft) {
+        const ir = interactionRef.current;
+        if (ir.pointEdit) {
           e.preventDefault();
-          interactionRef.current.polygonDraft = null;
+          ir.pointEdit = null;
+          ir.draggingPointIndex = null;
+          renderRef.current();
+          return;
+        }
+        if (ir.polygonDraft) {
+          e.preventDefault();
+          ir.polygonDraft = null;
           renderRef.current();
         }
         return;
       }
 
-      // Delete / Backspace → remove selected elements
+      // Delete / Backspace → remove selected vertex or selected elements
       if (e.key === "Delete" || e.key === "Backspace") {
-        // Don't delete if user is typing in an input
         if (
           e.target instanceof HTMLInputElement ||
           e.target instanceof HTMLTextAreaElement
         ) return;
+
+        const ir = interactionRef.current;
+        if (ir.pointEdit && ir.pointEdit.selectedPointIndex !== null) {
+          const el = state.elements.find((x) => x.id === ir.pointEdit!.elementId);
+          if (el?.type === "polygon" && el.points.length > MIN_POLYGON_POINTS) {
+            e.preventDefault();
+            const idx = ir.pointEdit.selectedPointIndex;
+            const newPoints = el.points.filter((_, i) => i !== idx);
+            dispatch({
+              type: "UPDATE_ELEMENT",
+              id: el.id,
+              changes: { points: newPoints },
+            });
+            ir.pointEdit.selectedPointIndex = null;
+            renderRef.current();
+          }
+          return;
+        }
+
         e.preventDefault();
         dispatch({ type: "DELETE_SELECTED" });
         return;
@@ -296,7 +406,7 @@ export default function Canvas() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [dispatch, undo, redo, state.tool]);
+  }, [dispatch, undo, redo, state.tool, state.elements]);
 
   function commitPolygon(points: Point[]) {
     const element: PolygonElement = {
@@ -357,6 +467,19 @@ export default function Canvas() {
       drawPolygonDraft(ctx, draft.points, draft.previewPoint);
     }
 
+    const pointEdit = interactionRef.current.pointEdit;
+    if (pointEdit) {
+      const el = state.elements.find((e) => e.id === pointEdit.elementId);
+      if (el?.type === "polygon") {
+        drawVertexHandles(
+          ctx,
+          el.points,
+          pointEdit.selectedPointIndex,
+          zoom,
+        );
+      }
+    }
+
     ctx.restore();
   }, [state.viewport, state.elements, state.selectedIds]);
 
@@ -389,7 +512,24 @@ export default function Canvas() {
       interactionRef.current.polygonDraft = null;
       renderRef.current();
     }
+    if (state.tool !== "select") {
+      interactionRef.current.pointEdit = null;
+      interactionRef.current.draggingPointIndex = null;
+      renderRef.current();
+    }
   }, [state.tool]);
+
+  // Exit point edit if the polygon was removed
+  useEffect(() => {
+    const pe = interactionRef.current.pointEdit;
+    if (!pe) return;
+    const el = state.elements.find((e) => e.id === pe.elementId);
+    if (!el || el.type !== "polygon") {
+      interactionRef.current.pointEdit = null;
+      interactionRef.current.draggingPointIndex = null;
+      renderRef.current();
+    }
+  }, [state.elements]);
 
   // Re-render when state changes
   useEffect(() => {
@@ -448,6 +588,76 @@ export default function Canvas() {
     return null;
   }
 
+  function getPolygonBeingEdited(): PolygonElement | null {
+    const pe = interactionRef.current.pointEdit;
+    if (!pe) return null;
+    const el = state.elements.find((e) => e.id === pe.elementId);
+    return el?.type === "polygon" ? el : null;
+  }
+
+  function handleDoubleClick(e: React.MouseEvent) {
+    if (state.tool !== "select") return;
+
+    const world = getWorldPos(e);
+    const hit = hitTest(world.x, world.y);
+    if (hit?.type !== "polygon") return;
+
+    const ir = interactionRef.current;
+    ir.pointEdit = { elementId: hit.id, selectedPointIndex: null };
+    ir.isDragging = false;
+    ir.dragOrigins = null;
+    ir.draggingPointIndex = null;
+    dispatch({ type: "SET_SELECTION", ids: [hit.id] });
+    renderRef.current();
+  }
+
+  function handlePointEditMouseDown(world: Point) {
+    const ir = interactionRef.current;
+    const el = getPolygonBeingEdited();
+    if (!el || !ir.pointEdit) return false;
+
+    const hitRadius = VERTEX_HIT_PX / state.viewport.zoom;
+    const edgeHitRadius = EDGE_HIT_PX / state.viewport.zoom;
+
+    const vertexIndex = hitTestVertex(el.points, world.x, world.y, hitRadius);
+    if (vertexIndex !== null) {
+      ir.pointEdit.selectedPointIndex = vertexIndex;
+      ir.draggingPointIndex = vertexIndex;
+      ir.isDragging = false;
+      ir.dragOrigins = null;
+      renderRef.current();
+      return true;
+    }
+
+    const edge = hitTestEdge(el.points, world.x, world.y, edgeHitRadius);
+    if (edge) {
+      const newPoint = snapPoint(edge.point.x, edge.point.y);
+      const newPoints = [...el.points];
+      newPoints.splice(edge.edgeIndex + 1, 0, newPoint);
+      dispatch({
+        type: "UPDATE_ELEMENT",
+        id: el.id,
+        changes: { points: newPoints },
+      });
+      ir.pointEdit.selectedPointIndex = edge.edgeIndex + 1;
+      ir.draggingPointIndex = edge.edgeIndex + 1;
+      renderRef.current();
+      return true;
+    }
+
+    const hit = hitTest(world.x, world.y);
+    if (hit?.id === el.id) {
+      ir.pointEdit.selectedPointIndex = null;
+      renderRef.current();
+      return true;
+    }
+
+    ir.pointEdit = null;
+    ir.draggingPointIndex = null;
+    renderRef.current();
+    return false;
+  }
+
   function handleMouseDown(e: React.MouseEvent) {
     const ir = interactionRef.current;
     const tool = state.tool;
@@ -486,13 +696,22 @@ export default function Canvas() {
       return;
     }
 
-    // Select tool → pick & drag
+    // Select tool → point edit, pick & drag
     const world = getWorldPos(e);
+
+    if (tool === "select" && ir.pointEdit) {
+      if (handlePointEditMouseDown(world)) return;
+    }
+
     const hit = hitTest(world.x, world.y);
 
     if (hit) {
       if (!state.selectedIds.includes(hit.id)) {
         dispatch({ type: "SET_SELECTION", ids: [hit.id] });
+      }
+      if (ir.pointEdit) {
+        ir.pointEdit = null;
+        ir.draggingPointIndex = null;
       }
       ir.isDragging = true;
       ir.dragStartX = world.x;
@@ -529,6 +748,23 @@ export default function Canvas() {
           offsetY: state.viewport.offsetY + dy,
         },
       });
+      return;
+    }
+
+    if (ir.draggingPointIndex !== null && ir.pointEdit) {
+      const world = getWorldPos(e);
+      const el = getPolygonBeingEdited();
+      if (el) {
+        const pt = snapPoint(world.x, world.y);
+        const newPoints = el.points.map((p, i) =>
+          i === ir.draggingPointIndex ? pt : p,
+        );
+        dispatch({
+          type: "UPDATE_ELEMENT",
+          id: el.id,
+          changes: { points: newPoints },
+        });
+      }
       return;
     }
 
@@ -586,15 +822,21 @@ export default function Canvas() {
       ir.isDragging = false;
       ir.dragOrigins = null;
     }
+
+    if (ir.draggingPointIndex !== null) {
+      ir.draggingPointIndex = null;
+    }
   }
 
   // Determine cursor
   function getCursor(): string {
     const ir = interactionRef.current;
     if (ir.isPanning) return "grabbing";
+    if (ir.draggingPointIndex !== null) return "grabbing";
     if (ir.isDragging) return "move";
     if (state.tool === "pan") return "grab";
     if (state.tool === "polygon") return "crosshair";
+    if (ir.pointEdit) return "crosshair";
     return "default";
   }
 
@@ -612,6 +854,7 @@ export default function Canvas() {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
         onContextMenu={(e) => e.preventDefault()}
       />
     </div>
