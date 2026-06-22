@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useCanvasContext } from "./store.tsx";
-import type { CanvasElement, Point, PolygonElement, Tool } from "./types.ts";
+import type { CanvasElement, Measurement, Point, PolygonElement, Tool } from "./types.ts";
 import { SnappedPosition } from "../geometry/pkg/index.ts";
 
 const GRID_SIZE = 20;
@@ -232,6 +232,100 @@ function drawVertexHandles(
   }
 }
 
+function gridDelta(a: Point, b: Point) {
+  return {
+    dx: (b.x - a.x) / GRID_SIZE,
+    dy: (b.y - a.y) / GRID_SIZE,
+  };
+}
+
+function gridDistance(a: Point, b: Point) {
+  const { dx, dy } = gridDelta(a, b);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function formatGridUnits(n: number) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function drawMeasurement(
+  ctx: CanvasRenderingContext2D,
+  start: Point,
+  end: Point,
+  zoom: number,
+  isPreview = false,
+) {
+  const { dx, dy } = gridDelta(start, end);
+  const dist = gridDistance(start, end);
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  const stroke = isPreview ? "rgba(255, 180, 60, 0.85)" : "#FFB43C";
+  const endpointRadius = 4;
+  const crosshairSize = 6 / zoom;
+  const fontSize = 12 / zoom;
+  const padding = 4 / zoom;
+
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = stroke;
+  ctx.lineWidth = 1.5 / zoom;
+
+  // Main line
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+
+  // Endpoint markers
+  for (const pt of [start, end]) {
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, endpointRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(pt.x - crosshairSize, pt.y);
+    ctx.lineTo(pt.x + crosshairSize, pt.y);
+    ctx.moveTo(pt.x, pt.y - crosshairSize);
+    ctx.lineTo(pt.x, pt.y + crosshairSize);
+    ctx.stroke();
+  }
+
+  // Axis guides (dashed right-angle triangle)
+  ctx.setLineDash([4 / zoom, 4 / zoom]);
+  ctx.strokeStyle = isPreview ? "rgba(255, 180, 60, 0.45)" : "rgba(255, 180, 60, 0.65)";
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Distance label at midpoint
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  const label =
+    absDx === 0 && absDy === 0
+      ? "0"
+      : `${formatGridUnits(absDx)} × ${formatGridUnits(absDy)}  (${formatGridUnits(dist)})`;
+
+  ctx.font = `${fontSize}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const metrics = ctx.measureText(label);
+  const boxW = metrics.width + padding * 2;
+  const boxH = fontSize + padding * 2;
+
+  ctx.fillStyle = "rgba(26, 26, 26, 0.9)";
+  ctx.fillRect(midX - boxW / 2, midY - boxH / 2, boxW, boxH);
+
+  ctx.fillStyle = stroke;
+  ctx.fillText(label, midX, midY);
+
+  ctx.restore();
+}
+
 function drawPolygonDraft(
   ctx: CanvasRenderingContext2D,
   points: Point[],
@@ -295,6 +389,8 @@ export default function Canvas() {
       | { id: string; x: number; y: number; points?: Point[] }[]
       | null,
     polygonDraft: null as { points: Point[]; previewPoint: Point | null } | null,
+    measureDraft: null as { start: Point; previewEnd: Point } | null,
+    measurements: [] as Measurement[],
     pointEdit: null as { elementId: string; selectedPointIndex: number | null } | null,
     draggingPointIndex: null as number | null,
   });
@@ -327,7 +423,7 @@ export default function Canvas() {
         return;
       }
 
-      // Escape → cancel polygon draft or exit point edit
+      // Escape → cancel polygon draft, measure draft, or exit point edit
       if (e.key === "Escape") {
         const ir = interactionRef.current;
         if (ir.pointEdit) {
@@ -340,6 +436,18 @@ export default function Canvas() {
         if (ir.polygonDraft) {
           e.preventDefault();
           ir.polygonDraft = null;
+          renderRef.current();
+          return;
+        }
+        if (ir.measureDraft) {
+          e.preventDefault();
+          ir.measureDraft = null;
+          renderRef.current();
+          return;
+        }
+        if (state.tool === "measure" && ir.measurements.length > 0) {
+          e.preventDefault();
+          ir.measurements = [];
           renderRef.current();
         }
         return;
@@ -467,6 +575,15 @@ export default function Canvas() {
       drawPolygonDraft(ctx, draft.points, draft.previewPoint);
     }
 
+    for (const m of interactionRef.current.measurements) {
+      drawMeasurement(ctx, m.start, m.end, zoom);
+    }
+
+    const measureDraft = interactionRef.current.measureDraft;
+    if (measureDraft) {
+      drawMeasurement(ctx, measureDraft.start, measureDraft.previewEnd, zoom, true);
+    }
+
     const pointEdit = interactionRef.current.pointEdit;
     if (pointEdit) {
       const el = state.elements.find((e) => e.id === pointEdit.elementId);
@@ -506,10 +623,15 @@ export default function Canvas() {
     return () => observer.disconnect();
   }, [render]);
 
-  // Clear polygon draft when leaving polygon tool (but not during space-pan)
+  // Clear polygon/measure drafts when leaving those tools (but not during space-pan)
   useEffect(() => {
     if (state.tool !== "polygon" && !interactionRef.current.spaceHeld) {
       interactionRef.current.polygonDraft = null;
+      renderRef.current();
+    }
+    if (state.tool !== "measure" && !interactionRef.current.spaceHeld) {
+      interactionRef.current.measureDraft = null;
+      interactionRef.current.measurements = [];
       renderRef.current();
     }
     if (state.tool !== "select") {
@@ -696,6 +818,25 @@ export default function Canvas() {
       return;
     }
 
+    // Measure tool → place endpoints on grid
+    if (tool === "measure") {
+      if (e.button !== 0) return;
+
+      const world = getWorldPos(e);
+      const pt = snapPoint(world.x, world.y);
+      const draft = ir.measureDraft;
+
+      if (!draft) {
+        ir.measureDraft = { start: pt, previewEnd: pt };
+      } else {
+        ir.measurements.push({ start: draft.start, end: pt });
+        ir.measureDraft = null;
+      }
+
+      renderRef.current();
+      return;
+    }
+
     // Select tool → point edit, pick & drag
     const world = getWorldPos(e);
 
@@ -808,6 +949,12 @@ export default function Canvas() {
       ir.polygonDraft.previewPoint = snapPoint(world.x, world.y);
       renderRef.current();
     }
+
+    if (state.tool === "measure" && ir.measureDraft) {
+      const world = getWorldPos(e);
+      ir.measureDraft.previewEnd = snapPoint(world.x, world.y);
+      renderRef.current();
+    }
   }
 
   function handleMouseUp(_e: React.MouseEvent) {
@@ -835,7 +982,7 @@ export default function Canvas() {
     if (ir.draggingPointIndex !== null) return "grabbing";
     if (ir.isDragging) return "move";
     if (state.tool === "pan") return "grab";
-    if (state.tool === "polygon") return "crosshair";
+    if (state.tool === "polygon" || state.tool === "measure") return "crosshair";
     if (ir.pointEdit) return "crosshair";
     return "default";
   }

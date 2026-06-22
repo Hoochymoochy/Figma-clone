@@ -52,7 +52,12 @@ export interface Viewport {
   zoom: number;
 }
 
-export type Tool = "select" | "pan" | "polygon";
+export type Tool = "select" | "pan" | "polygon" | "measure";
+
+export interface Measurement {
+  start: Point;
+  end: Point;
+}
 
 export interface CanvasState {
   elements: CanvasElement[];

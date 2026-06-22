@@ -37,6 +37,17 @@ export default function TopBar() {
       >
         ⬠ Polygon
       </button>
+      <button
+        onClick={() => dispatch({ type: "SET_TOOL", tool: "measure" })}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          state.tool === "measure"
+            ? "bg-neutral-600 text-white"
+            : "text-neutral-300 hover:bg-neutral-700"
+        }`}
+        title="Measure — click point A, then point B (snaps to grid)"
+      >
+        📏 Measure
+      </button>
 
       {/* Divider */}
       <div className="w-px h-5 bg-neutral-600" />
@@ -79,6 +90,8 @@ export default function TopBar() {
       <span className="text-xs text-neutral-500">
         {state.tool === "polygon"
           ? "Click to place points · Double-click or Enter to close · Esc to cancel"
+          : state.tool === "measure"
+            ? "Click point A, then point B · Distances in grid units · Esc to cancel"
           : hasSelection
             ? `${state.selectedIds.length} selected`
             : "Space+drag to pan · Scroll to zoom"}
