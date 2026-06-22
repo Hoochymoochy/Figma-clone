@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useCallback, useRef, type ReactNode } from "react";
-import type { CanvasState, CanvasAction } from "./types.ts";
+import type { CanvasState, CanvasAction, CanvasElement } from "./types.ts";
 
 const MAX_HISTORY = 50;
 
@@ -27,7 +27,7 @@ export function canvasReducer(
       return {
         ...state,
         elements: state.elements.map((el) =>
-          el.id === action.id ? { ...el, ...action.changes } : el,
+          el.id === action.id ? ({ ...el, ...action.changes } as CanvasElement) : el,
         ),
       };
 

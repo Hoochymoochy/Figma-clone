@@ -1,16 +1,50 @@
-export type ShapeType = "rectangle" | "circle";
+export type ShapeType = "rectangle" | "circle" | "polygon";
 
-export interface CanvasElement {
-  id: string;
-  type: ShapeType;
+export interface Point {
   x: number;
   y: number;
-  width: number;
-  height: number;
+}
+
+interface BaseElement {
+  id: string;
   fill: string;
   stroke: string;
   strokeWidth: number;
 }
+
+export interface RectElement extends BaseElement {
+  type: "rectangle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CircleElement extends BaseElement {
+  type: "circle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PolygonElement extends BaseElement {
+  type: "polygon";
+  points: Point[];
+}
+
+export type CanvasElement = RectElement | CircleElement | PolygonElement;
+
+export type ElementUpdate = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  points?: Point[];
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+};
 
 export interface Viewport {
   offsetX: number;
@@ -18,7 +52,7 @@ export interface Viewport {
   zoom: number;
 }
 
-export type Tool = "select" | "pan";
+export type Tool = "select" | "pan" | "polygon";
 
 export interface CanvasState {
   elements: CanvasElement[];
@@ -29,7 +63,7 @@ export interface CanvasState {
 
 export type CanvasAction =
   | { type: "ADD_ELEMENT"; element: CanvasElement }
-  | { type: "UPDATE_ELEMENT"; id: string; changes: Partial<CanvasElement> }
+  | { type: "UPDATE_ELEMENT"; id: string; changes: ElementUpdate }
   | { type: "DELETE_ELEMENT"; id: string }
   | { type: "DELETE_SELECTED" }
   | { type: "SET_SELECTION"; ids: string[] }

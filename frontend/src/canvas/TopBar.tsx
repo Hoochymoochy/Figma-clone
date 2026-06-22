@@ -14,6 +14,33 @@ export default function TopBar() {
       {/* Divider */}
       <div className="w-px h-5 bg-neutral-600" />
 
+      {/* Tools */}
+      <button
+        onClick={() => dispatch({ type: "SET_TOOL", tool: "select" })}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          state.tool === "select"
+            ? "bg-neutral-600 text-white"
+            : "text-neutral-300 hover:bg-neutral-700"
+        }`}
+        title="Select (V)"
+      >
+        ↖ Select
+      </button>
+      <button
+        onClick={() => dispatch({ type: "SET_TOOL", tool: "polygon" })}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          state.tool === "polygon"
+            ? "bg-neutral-600 text-white"
+            : "text-neutral-300 hover:bg-neutral-700"
+        }`}
+        title="Polygon — click to place points, double-click or Enter to close"
+      >
+        ⬠ Polygon
+      </button>
+
+      {/* Divider */}
+      <div className="w-px h-5 bg-neutral-600" />
+
       {/* Undo / Redo */}
       <button
         onClick={undo}
@@ -50,9 +77,11 @@ export default function TopBar() {
 
       {/* Help text */}
       <span className="text-xs text-neutral-500">
-        {hasSelection
-          ? `${state.selectedIds.length} selected`
-          : "Space+drag to pan · Scroll to zoom"}
+        {state.tool === "polygon"
+          ? "Click to place points · Double-click or Enter to close · Esc to cancel"
+          : hasSelection
+            ? `${state.selectedIds.length} selected`
+            : "Space+drag to pan · Scroll to zoom"}
       </span>
     </div>
   );

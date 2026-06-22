@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useCanvasContext } from "./store.tsx";
-import type { CanvasElement } from "./types.ts";
+import type { CanvasElement, Point, PolygonElement, Tool } from "./types.ts";
 import { SnappedPosition } from "../geometry/pkg/index.ts";
 
 const GRID_SIZE = 20;
@@ -58,6 +58,17 @@ function drawGrid(
   ctx.stroke();
 }
 
+function boundsFromPoints(points: Point[]) {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return {
+    left: Math.min(...xs),
+    top: Math.min(...ys),
+    right: Math.max(...xs),
+    bottom: Math.max(...ys),
+  };
+}
+
 function drawElement(
   ctx: CanvasRenderingContext2D,
   el: CanvasElement,
@@ -88,6 +99,24 @@ function drawElement(
     ctx.ellipse(cx, cy, Math.abs(rx), Math.abs(ry), 0, 0, Math.PI * 2);
     ctx.fill();
     if (el.strokeWidth > 0) ctx.stroke();
+  } else if (el.type === "polygon") {
+    if (el.points.length < 2) {
+      ctx.restore();
+      return;
+    }
+
+    ctx.fillStyle = el.fill;
+    ctx.strokeStyle = el.stroke;
+    ctx.lineWidth = el.strokeWidth;
+
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for (let i = 1; i < el.points.length; i++) {
+      ctx.lineTo(el.points[i].x, el.points[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    if (el.strokeWidth > 0) ctx.stroke();
   }
 
   // Selection indicator
@@ -95,12 +124,19 @@ function drawElement(
     ctx.strokeStyle = "#4A90D9";
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 3]);
-    ctx.strokeRect(
-      el.x - 4,
-      el.y - 4,
-      el.width + 8,
-      el.height + 8,
-    );
+
+    if (el.type === "polygon") {
+      const b = boundsFromPoints(el.points);
+      ctx.strokeRect(b.left - 4, b.top - 4, b.right - b.left + 8, b.bottom - b.top + 8);
+    } else {
+      ctx.strokeRect(
+        el.x - 4,
+        el.y - 4,
+        el.width + 8,
+        el.height + 8,
+      );
+    }
+
     ctx.setLineDash([]);
   }
 
@@ -108,7 +144,50 @@ function drawElement(
 }
 
 function getElementBounds(el: CanvasElement) {
+  if (el.type === "polygon") {
+    return boundsFromPoints(el.points);
+  }
   return { left: el.x, top: el.y, right: el.x + el.width, bottom: el.y + el.height };
+}
+
+function drawPolygonDraft(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  previewPoint: Point | null,
+) {
+  if (points.length === 0) return;
+
+  ctx.strokeStyle = "#4A90D9";
+  ctx.fillStyle = "rgba(74, 144, 217, 0.15)";
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  if (previewPoint) {
+    ctx.lineTo(previewPoint.x, previewPoint.y);
+  }
+  ctx.stroke();
+
+  if (points.length >= 3 && previewPoint) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.lineTo(previewPoint.x, previewPoint.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  for (const pt of points) {
+    ctx.beginPath();
+    ctx.fillStyle = "#4A90D9";
+    ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 // ---- component --------------------------------------------------------------
@@ -118,16 +197,22 @@ export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const { state, dispatch, undo, redo } = useCanvasContext();
 
+  const renderRef = useRef<() => void>(() => {});
+
   // Track interaction state (not in React state to avoid re-renders)
   const interactionRef = useRef({
     isPanning: false,
     isDragging: false,
     spaceHeld: false,
+    toolBeforeSpace: "select" as Tool,
     lastMouseX: 0,
     lastMouseY: 0,
     dragStartX: 0,
     dragStartY: 0,
-    dragOrigins: null as { id: string; x: number; y: number }[] | null,
+    dragOrigins: null as
+      | { id: string; x: number; y: number; points?: Point[] }[]
+      | null,
+    polygonDraft: null as { points: Point[]; previewPoint: Point | null } | null,
   });
 
   // ---- keyboard handlers ----------------------------------------------------
@@ -137,8 +222,34 @@ export default function Canvas() {
       // Space → pan mode
       if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
-        interactionRef.current.spaceHeld = true;
+        const ir = interactionRef.current;
+        ir.spaceHeld = true;
+        ir.toolBeforeSpace = state.tool;
         dispatch({ type: "SET_TOOL", tool: "pan" });
+        return;
+      }
+
+      // Enter → close polygon
+      if (e.key === "Enter" && state.tool === "polygon") {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement
+        ) return;
+        e.preventDefault();
+        const draft = interactionRef.current.polygonDraft;
+        if (draft && draft.points.length >= 3) {
+          commitPolygon(draft.points);
+        }
+        return;
+      }
+
+      // Escape → cancel polygon draft
+      if (e.key === "Escape") {
+        if (interactionRef.current.polygonDraft) {
+          e.preventDefault();
+          interactionRef.current.polygonDraft = null;
+          renderRef.current();
+        }
         return;
       }
 
@@ -173,8 +284,9 @@ export default function Canvas() {
 
     function handleKeyUp(e: KeyboardEvent) {
       if (e.code === "Space") {
-        interactionRef.current.spaceHeld = false;
-        dispatch({ type: "SET_TOOL", tool: "select" });
+        const ir = interactionRef.current;
+        ir.spaceHeld = false;
+        dispatch({ type: "SET_TOOL", tool: ir.toolBeforeSpace });
       }
     }
 
@@ -184,7 +296,27 @@ export default function Canvas() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [dispatch, undo, redo]);
+  }, [dispatch, undo, redo, state.tool]);
+
+  function commitPolygon(points: Point[]) {
+    const element: PolygonElement = {
+      id: crypto.randomUUID(),
+      type: "polygon",
+      points,
+      fill: "rgba(74, 144, 217, 0.5)",
+      stroke: "#4A90D9",
+      strokeWidth: 2,
+    };
+    dispatch({ type: "ADD_ELEMENT", element });
+    dispatch({ type: "SET_SELECTION", ids: [element.id] });
+    interactionRef.current.polygonDraft = null;
+    dispatch({ type: "SET_TOOL", tool: "select" });
+  }
+
+  function snapPoint(wx: number, wy: number): Point {
+    const snapped = new SnappedPosition(wx, wy, GRID_SIZE);
+    return { x: snapped.snapped_x, y: snapped.snapped_y };
+  }
 
   // ---- rendering ------------------------------------------------------------
 
@@ -220,8 +352,15 @@ export default function Canvas() {
       drawElement(ctx, el, selected);
     }
 
+    const draft = interactionRef.current.polygonDraft;
+    if (draft) {
+      drawPolygonDraft(ctx, draft.points, draft.previewPoint);
+    }
+
     ctx.restore();
   }, [state.viewport, state.elements, state.selectedIds]);
+
+  renderRef.current = render;
 
   // Resize observer
   useEffect(() => {
@@ -243,6 +382,14 @@ export default function Canvas() {
     observer.observe(container);
     return () => observer.disconnect();
   }, [render]);
+
+  // Clear polygon draft when leaving polygon tool (but not during space-pan)
+  useEffect(() => {
+    if (state.tool !== "polygon" && !interactionRef.current.spaceHeld) {
+      interactionRef.current.polygonDraft = null;
+      renderRef.current();
+    }
+  }, [state.tool]);
 
   // Re-render when state changes
   useEffect(() => {
@@ -313,6 +460,32 @@ export default function Canvas() {
       return;
     }
 
+    // Polygon tool → place vertices
+    if (tool === "polygon") {
+      if (e.button !== 0) return;
+
+      const world = getWorldPos(e);
+      const draft = ir.polygonDraft;
+
+      // Double-click closes the polygon (detail >= 2 on the second click)
+      if (e.detail >= 2 && draft && draft.points.length >= 3) {
+        commitPolygon(draft.points);
+        return;
+      }
+
+      const pt = snapPoint(world.x, world.y);
+
+      if (!draft) {
+        ir.polygonDraft = { points: [pt], previewPoint: pt };
+      } else {
+        draft.points.push(pt);
+        draft.previewPoint = pt;
+      }
+
+      renderRef.current();
+      return;
+    }
+
     // Select tool → pick & drag
     const world = getWorldPos(e);
     const hit = hitTest(world.x, world.y);
@@ -326,6 +499,14 @@ export default function Canvas() {
       ir.dragStartY = world.y;
       ir.dragOrigins = state.selectedIds.map((id) => {
         const el = state.elements.find((x) => x.id === id)!;
+        if (el.type === "polygon") {
+          return {
+            id: el.id,
+            x: 0,
+            y: 0,
+            points: el.points.map((p) => ({ ...p })),
+          };
+        }
         return { id: el.id, x: el.x, y: el.y };
       });
     } else {
@@ -355,19 +536,42 @@ export default function Canvas() {
       const world = getWorldPos(e);
       const dx = world.x - ir.dragStartX;
       const dy = world.y - ir.dragStartY;
-      for (const { id, x, y } of ir.dragOrigins) {
-        const rawX = x + dx;
-        const rawY = y + dy;
-        const snapped = new SnappedPosition(rawX, rawY, GRID_SIZE);
-        dispatch({
-          type: "UPDATE_ELEMENT",
-          id,
-          changes: { x: snapped.snapped_x, y: snapped.snapped_y },
-        });
+      for (const origin of ir.dragOrigins) {
+        if (origin.points) {
+          const firstX = origin.points[0].x + dx;
+          const firstY = origin.points[0].y + dy;
+          const snapped = new SnappedPosition(firstX, firstY, GRID_SIZE);
+          const totalDx = snapped.snapped_x - origin.points[0].x;
+          const totalDy = snapped.snapped_y - origin.points[0].y;
+          dispatch({
+            type: "UPDATE_ELEMENT",
+            id: origin.id,
+            changes: {
+              points: origin.points.map((p) => ({
+                x: p.x + totalDx,
+                y: p.y + totalDy,
+              })),
+            },
+          });
+        } else {
+          const rawX = origin.x + dx;
+          const rawY = origin.y + dy;
+          const snapped = new SnappedPosition(rawX, rawY, GRID_SIZE);
+          dispatch({
+            type: "UPDATE_ELEMENT",
+            id: origin.id,
+            changes: { x: snapped.snapped_x, y: snapped.snapped_y },
+          });
+        }
       }
       return;
     }
 
+    if (state.tool === "polygon" && ir.polygonDraft) {
+      const world = getWorldPos(e);
+      ir.polygonDraft.previewPoint = snapPoint(world.x, world.y);
+      renderRef.current();
+    }
   }
 
   function handleMouseUp(_e: React.MouseEvent) {
@@ -390,6 +594,7 @@ export default function Canvas() {
     if (ir.isPanning) return "grabbing";
     if (ir.isDragging) return "move";
     if (state.tool === "pan") return "grab";
+    if (state.tool === "polygon") return "crosshair";
     return "default";
   }
 
