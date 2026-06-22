@@ -1,9 +1,16 @@
+import { CanvasProvider } from "./canvas/store.tsx";
+import Canvas from "./canvas/Canvas.tsx";
+import TopBar from "./canvas/TopBar.tsx";
+
 function App() {
   return (
-    <div className="h-screen w-screen bg-neutral-900 text-white">
-      <h1 className="text-xl font-bold">Figma Clone</h1>
-    </div>
-  )
+    <CanvasProvider>
+      <div className="h-screen w-screen flex flex-col bg-neutral-900 text-white">
+        <TopBar />
+        <Canvas />
+      </div>
+    </CanvasProvider>
+  );
 }
 
-export default App
+export default App;
