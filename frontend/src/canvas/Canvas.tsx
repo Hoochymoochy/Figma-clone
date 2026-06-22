@@ -116,7 +116,7 @@ function getElementBounds(el: CanvasElement) {
 export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { state, dispatch } = useCanvasContext();
+  const { state, dispatch, undo, redo } = useCanvasContext();
 
   // Track interaction state (not in React state to avoid re-renders)
   const interactionRef = useRef({
@@ -134,25 +134,57 @@ export default function Canvas() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Space → pan mode
       if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
         interactionRef.current.spaceHeld = true;
         dispatch({ type: "SET_TOOL", tool: "pan" });
+        return;
+      }
+
+      // Delete / Backspace → remove selected elements
+      if (e.key === "Delete" || e.key === "Backspace") {
+        // Don't delete if user is typing in an input
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement
+        ) return;
+        e.preventDefault();
+        dispatch({ type: "DELETE_SELECTED" });
+        return;
+      }
+
+      // Ctrl+Z → undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      // Ctrl+Y or Ctrl+Shift+Z → redo
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key === "y") ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z")
+      ) {
+        e.preventDefault();
+        redo();
       }
     }
+
     function handleKeyUp(e: KeyboardEvent) {
       if (e.code === "Space") {
         interactionRef.current.spaceHeld = false;
         dispatch({ type: "SET_TOOL", tool: "select" });
       }
     }
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [dispatch]);
+  }, [dispatch, undo, redo]);
 
   // ---- rendering ------------------------------------------------------------
 

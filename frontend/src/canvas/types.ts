@@ -31,7 +31,11 @@ export type CanvasAction =
   | { type: "ADD_ELEMENT"; element: CanvasElement }
   | { type: "UPDATE_ELEMENT"; id: string; changes: Partial<CanvasElement> }
   | { type: "DELETE_ELEMENT"; id: string }
+  | { type: "DELETE_SELECTED" }
   | { type: "SET_SELECTION"; ids: string[] }
   | { type: "CLEAR_SELECTION" }
   | { type: "SET_VIEWPORT"; viewport: Partial<Viewport> }
-  | { type: "SET_TOOL"; tool: Tool };
+  | { type: "SET_TOOL"; tool: Tool }
+  | { type: "UNDO" }
+  | { type: "REDO" }
+  | { type: "RESTORE_SNAPSHOT"; snapshot: Pick<CanvasState, "elements" | "selectedIds"> };
