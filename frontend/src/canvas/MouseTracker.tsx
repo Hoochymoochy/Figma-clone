@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
-import init, { SnappedPosition } from "../geometry/pkg";
-
-const GRID_SIZE = 20;
+import { snapPoint, initGeometry, isGeometryReady, GRID_SIZE } from "../geometry/scene.ts";
 
 interface MousePosition {
   rawX: number;
@@ -11,14 +9,13 @@ interface MousePosition {
 }
 
 export default function MouseTracker() {
-  const [wasmReady, setWasmReady] = useState(false);
+  const [wasmReady, setWasmReady] = useState(isGeometryReady());
   const [pos, setPos] = useState<MousePosition>({
     rawX: 0, rawY: 0, snappedX: 0, snappedY: 0,
   });
 
-  // Load WASM once on mount
   useEffect(() => {
-    init().then(() => setWasmReady(true));
+    initGeometry().then(() => setWasmReady(true));
   }, []);
 
   // Listen to mouse movement over the canvas
@@ -34,12 +31,12 @@ export default function MouseTracker() {
       const rawY = e.clientY - rect.top;
 
       if (wasmReady) {
-        const snapped = new SnappedPosition(rawX, rawY, GRID_SIZE);
+        const snapped = snapPoint(rawX, rawY, GRID_SIZE);
         setPos({
-          rawX: Math.round(snapped.original_x),
-          rawY: Math.round(snapped.original_y),
-          snappedX: Math.round(snapped.snapped_x),
-          snappedY: Math.round(snapped.snapped_y),
+          rawX: Math.round(rawX),
+          rawY: Math.round(rawY),
+          snappedX: Math.round(snapped.x),
+          snappedY: Math.round(snapped.y),
         });
       } else {
         // Fallback before WASM loads

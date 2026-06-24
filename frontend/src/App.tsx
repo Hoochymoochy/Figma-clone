@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { CanvasProvider, useCanvasContext } from "./canvas/store.tsx";
 import Canvas from "./canvas/Canvas.tsx";
 import TopBar from "./canvas/TopBar.tsx";
 import Sidebar from "./canvas/Sidebar.tsx";
 import MouseTracker from "./canvas/MouseTracker.tsx";
+import { initGeometry } from "./geometry/scene.ts";
 
 function AppLayout() {
   const { state } = useCanvasContext();
@@ -20,6 +22,12 @@ function AppLayout() {
 }
 
 function App() {
+  useEffect(() => {
+    initGeometry().catch((err) => {
+      console.error("Failed to initialize geometry WASM:", err);
+    });
+  }, []);
+
   return (
     <CanvasProvider>
       <AppLayout />

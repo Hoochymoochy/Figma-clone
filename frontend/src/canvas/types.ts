@@ -79,4 +79,5 @@ export type CanvasAction =
   | { type: "SET_TOOL"; tool: Tool }
   | { type: "UNDO" }
   | { type: "REDO" }
-  | { type: "RESTORE_SNAPSHOT"; snapshot: Pick<CanvasState, "elements" | "selectedIds"> };
+  | { type: "RESTORE_SNAPSHOT"; snapshot: Pick<CanvasState, "elements" | "selectedIds"> }
+  | { type: "REPLACE_ELEMENTS"; elements: CanvasElement[] };

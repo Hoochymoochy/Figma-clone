@@ -1,5 +1,15 @@
-import { createContext, useContext, useReducer, useCallback, useRef, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useCallback, useRef, useEffect, type ReactNode } from "react";
 import type { CanvasState, CanvasAction, CanvasElement } from "./types.ts";
+import {
+  addShape,
+  updateShape,
+  removeShape,
+  removeShapes,
+  importShapes,
+  exportElements,
+  isGeometryReady,
+  initGeometry,
+} from "../geometry/scene.ts";
 
 const MAX_HISTORY = 50;
 
@@ -69,6 +79,12 @@ export function canvasReducer(
         selectedIds: action.snapshot.selectedIds,
       };
 
+    case "REPLACE_ELEMENTS":
+      return {
+        ...state,
+        elements: action.elements,
+      };
+
     default:
       return state;
   }
@@ -83,6 +99,32 @@ function takeSnapshot(state: CanvasState): Snapshot {
     elements: state.elements,
     selectedIds: state.selectedIds,
   };
+}
+
+function applyGeometryMutation(
+  dispatch: React.Dispatch<CanvasAction>,
+  mutate: () => CanvasElement[],
+) {
+  const elements = mutate();
+  dispatch({ type: "REPLACE_ELEMENTS", elements });
+}
+
+function restoreSnapshot(
+  dispatch: React.Dispatch<CanvasAction>,
+  snapshot: Snapshot,
+) {
+  if (isGeometryReady()) {
+    importShapes(snapshot.elements);
+    dispatch({
+      type: "RESTORE_SNAPSHOT",
+      snapshot: {
+        elements: exportElements(),
+        selectedIds: snapshot.selectedIds,
+      },
+    });
+  } else {
+    dispatch({ type: "RESTORE_SNAPSHOT", snapshot });
+  }
 }
 
 // Actions that change elements (tracked in undo history)
@@ -107,45 +149,61 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(canvasReducer, initialState);
   const past = useRef<Snapshot[]>([]);
   const future = useRef<Snapshot[]>([]);
-  // Skip history push for UPDATE_ELEMENT during a drag sequence
   const dragSnapshotTaken = useRef(false);
-  // Tick to force re-render when undo/redo state changes
   const [, setTick] = useReducer((t: number) => t + 1, 0);
+
+  useEffect(() => {
+    initGeometry().then(() => {
+      importShapes(state.elements);
+      if (state.elements.length > 0) {
+        dispatch({ type: "REPLACE_ELEMENTS", elements: exportElements() });
+      }
+    });
+  }, []);
 
   const wrappedDispatch = useCallback(
     (action: CanvasAction) => {
-      // UNDO
       if (action.type === "UNDO") {
         if (past.current.length === 0) return;
         const prev = past.current.pop()!;
         future.current.push(takeSnapshot(state));
-        dispatch({ type: "RESTORE_SNAPSHOT", snapshot: prev });
+        restoreSnapshot(dispatch, prev);
         setTick();
         return;
       }
 
-      // REDO
       if (action.type === "REDO") {
         if (future.current.length === 0) return;
         const next = future.current.pop()!;
         past.current.push(takeSnapshot(state));
-        dispatch({ type: "RESTORE_SNAPSHOT", snapshot: next });
+        restoreSnapshot(dispatch, next);
         setTick();
         return;
       }
 
-      // Snapshot before element-changing actions
       if (MUTATION_ACTIONS.has(action.type)) {
         past.current.push(takeSnapshot(state));
         if (past.current.length > MAX_HISTORY) past.current.shift();
         future.current = [];
         dragSnapshotTaken.current = false;
-        dispatch(action);
+
+        if (isGeometryReady()) {
+          if (action.type === "ADD_ELEMENT") {
+            applyGeometryMutation(dispatch, () => addShape(action.element));
+          } else if (action.type === "DELETE_ELEMENT") {
+            applyGeometryMutation(dispatch, () => removeShape(action.id));
+          } else if (action.type === "DELETE_SELECTED") {
+            applyGeometryMutation(dispatch, () =>
+              removeShapes(state.selectedIds),
+            );
+          }
+        } else {
+          dispatch(action);
+        }
         setTick();
         return;
       }
 
-      // UPDATE_ELEMENT: snapshot on first call since last mutation / drag-start
       if (action.type === "UPDATE_ELEMENT") {
         if (!dragSnapshotTaken.current) {
           past.current.push(takeSnapshot(state));
@@ -153,11 +211,16 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
           future.current = [];
           dragSnapshotTaken.current = true;
         }
-        dispatch(action);
+        if (isGeometryReady()) {
+          applyGeometryMutation(dispatch, () =>
+            updateShape(action.id, action.changes),
+          );
+        } else {
+          dispatch(action);
+        }
         return;
       }
 
-      // All other actions (selection, viewport, tool) — pass through
       dispatch(action);
     },
     [state],
